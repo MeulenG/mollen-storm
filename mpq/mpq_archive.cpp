@@ -5,7 +5,9 @@
 #include <string>
 
 MpqArchive::MpqArchive()
-    : file_(nullptr), header_{}, archive_offset_(0), sector_size_(0) {
+    : file_(nullptr), header_{}, hi_block_table_pos_(0),
+      hash_table_pos_hi_(0), block_table_pos_hi_(0),
+      archive_offset_(0), sector_size_(0) {
     InitCryptTable(crypt_table_);
 }
 
@@ -36,6 +38,11 @@ bool MpqArchive::Open(const char* path) {
         return false;
     }
 
+    if (!ReadHiBlockTable()) {
+        Close();
+        return false;
+    }
+
     return true;
 }
 
@@ -46,6 +53,10 @@ void MpqArchive::Close() {
     }
     hash_table_.clear();
     block_table_.clear();
+    hi_block_table_.clear();
+    hi_block_table_pos_ = 0;
+    hash_table_pos_hi_ = 0;
+    block_table_pos_hi_ = 0;
     sector_size_ = 0;
 }
 
@@ -59,6 +70,18 @@ bool MpqArchive::ReadHeader() {
         return false;
     }
 
+    if (header_.format_version >= 1) {
+        if (fread(&hi_block_table_pos_, sizeof(uint64_t), 1, file_) != 1) {
+            return false;
+        }
+        if (fread(&hash_table_pos_hi_, sizeof(uint16_t), 1, file_) != 1) {
+            return false;
+        }
+        if (fread(&block_table_pos_hi_, sizeof(uint16_t), 1, file_) != 1) {
+            return false;
+        }
+    }
+
     sector_size_ = 512u << header_.block_size;
     return true;
 }
@@ -66,7 +89,7 @@ bool MpqArchive::ReadHeader() {
 bool MpqArchive::ReadHashTable() {
     hash_table_.resize(header_.hash_table_size);
 
-    Seek(archive_offset_ + (uint64_t)header_.hash_table_pos);
+    Seek(archive_offset_ + GetHashTableOffset());
     if (fread(hash_table_.data(), sizeof(hash_table_entry),
               header_.hash_table_size, file_) != header_.hash_table_size) {
         return false;
@@ -83,7 +106,7 @@ bool MpqArchive::ReadHashTable() {
 bool MpqArchive::ReadBlockTable() {
     block_table_.resize(header_.block_table_size);
 
-    Seek(archive_offset_ + (uint64_t)header_.block_table_pos);
+    Seek(archive_offset_ + GetBlockTableOffset());
     if (fread(block_table_.data(), sizeof(block_table_entry),
               header_.block_table_size, file_) != header_.block_table_size) {
         return false;
@@ -95,6 +118,38 @@ bool MpqArchive::ReadBlockTable() {
                  key, crypt_table_);
 
     return true;
+}
+
+bool MpqArchive::ReadHiBlockTable() {
+    if (header_.format_version < 1 || hi_block_table_pos_ == 0) {
+        return true;
+    }
+
+    hi_block_table_.resize(header_.block_table_size);
+
+    Seek(archive_offset_ + hi_block_table_pos_);
+    if (fread(hi_block_table_.data(), sizeof(uint16_t),
+              header_.block_table_size, file_) != header_.block_table_size) {
+        return false;
+    }
+
+    return true;
+}
+
+uint64_t MpqArchive::GetHashTableOffset() {
+    return (uint64_t)header_.hash_table_pos | ((uint64_t)hash_table_pos_hi_ << 32);
+}
+
+uint64_t MpqArchive::GetBlockTableOffset() {
+    return (uint64_t)header_.block_table_pos | ((uint64_t)block_table_pos_hi_ << 32);
+}
+
+uint64_t MpqArchive::GetFileOffset(uint32_t block_index) {
+    uint64_t offset = block_table_[block_index].file_offset;
+    if (block_index < hi_block_table_.size()) {
+        offset |= (uint64_t)hi_block_table_[block_index] << 32;
+    }
+    return offset;
 }
 
 std::vector<uint8_t> MpqArchive::ExtractFile(const char* filename) {
@@ -111,17 +166,20 @@ std::vector<uint8_t> MpqArchive::ExtractFile(const char* filename) {
 
     uint32_t file_key = 0;
     if (block.flags & MPQ_FILE_ENCRYPTED) {
-        file_key = GetFileKey(filename, block);
+        file_key = GetFileKey(filename, block_index);
     }
+
+    uint64_t file_offset = GetFileOffset(block_index);
 
     if (block.flags & MPQ_FILE_SINGLE_UNIT) {
-        return ExtractSingleUnit(block, file_key);
+        return ExtractSingleUnit(block, file_key, file_offset);
     }
 
-    return ExtractSectorBased(block, file_key);
+    return ExtractSectorBased(block, file_key, file_offset);
 }
 
-uint32_t MpqArchive::GetFileKey(const char* filename, const block_table_entry& block) {
+uint32_t MpqArchive::GetFileKey(const char* filename, uint32_t block_index) {
+    const block_table_entry& block = block_table_[block_index];
     const char* base = strrchr(filename, '\\');
     if (!base) {
         base = strrchr(filename, '/');
@@ -131,14 +189,15 @@ uint32_t MpqArchive::GetFileKey(const char* filename, const block_table_entry& b
     uint32_t key = HashString(key_name, HASH_TYPE_FILE_KEY, crypt_table_);
 
     if (block.flags & MPQ_FILE_FIX_KEY) {
-        key = (key + block.file_offset) ^ block.uncompressed_size;
+        key = (key + (uint32_t)GetFileOffset(block_index)) ^ block.uncompressed_size;
     }
 
     return key;
 }
 
-std::vector<uint8_t> MpqArchive::ExtractSingleUnit(const block_table_entry& block, uint32_t file_key) {
-    Seek(archive_offset_ + (uint64_t)block.file_offset);
+std::vector<uint8_t> MpqArchive::ExtractSingleUnit(const block_table_entry& block,
+                                                    uint32_t file_key, uint64_t file_offset) {
+    Seek(archive_offset_ + file_offset);
 
     std::vector<uint8_t> raw(block.compressed_size);
     if (fread(raw.data(), 1, block.compressed_size, file_) != block.compressed_size) {
@@ -163,14 +222,15 @@ std::vector<uint8_t> MpqArchive::ExtractSingleUnit(const block_table_entry& bloc
     return raw;
 }
 
-std::vector<uint8_t> MpqArchive::ExtractSectorBased(const block_table_entry& block, uint32_t file_key) {
+std::vector<uint8_t> MpqArchive::ExtractSectorBased(const block_table_entry& block,
+                                                     uint32_t file_key, uint64_t file_offset) {
     uint32_t sector_count = (block.uncompressed_size + sector_size_ - 1) / sector_size_;
     uint32_t offset_count = sector_count + 1;
     if (block.flags & MPQ_FILE_SECTOR_CRC) {
         offset_count++;
     }
 
-    Seek(archive_offset_ + (uint64_t)block.file_offset);
+    Seek(archive_offset_ + file_offset);
 
     std::vector<uint32_t> sector_offsets(offset_count);
     if (fread(sector_offsets.data(), sizeof(uint32_t), offset_count, file_) != offset_count) {
@@ -191,7 +251,7 @@ std::vector<uint8_t> MpqArchive::ExtractSectorBased(const block_table_entry& blo
             sector_uncompressed_size = block.uncompressed_size - (sector_size_ * i);
         }
 
-        Seek(archive_offset_ + (uint64_t)block.file_offset + sector_offsets[i]);
+        Seek(archive_offset_ + file_offset + sector_offsets[i]);
 
         std::vector<uint8_t> sector_data(sector_compressed_size);
         if (fread(sector_data.data(), 1, sector_compressed_size, file_) != sector_compressed_size) {
