@@ -12,6 +12,55 @@ FetchContent_Declare(
 set(ZLIB_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(zlib)
 
+FetchContent_Declare(
+    bzip2
+    GIT_REPOSITORY https://github.com/libarchive/bzip2.git
+    GIT_TAG        bzip2-1.0.8
+    GIT_SHALLOW    TRUE
+)
+FetchContent_GetProperties(bzip2)
+if(NOT bzip2_POPULATED)
+    FetchContent_Populate(bzip2)
+endif()
+
+add_library(bzip2 STATIC
+    ${bzip2_SOURCE_DIR}/blocksort.c
+    ${bzip2_SOURCE_DIR}/huffman.c
+    ${bzip2_SOURCE_DIR}/crctable.c
+    ${bzip2_SOURCE_DIR}/randtable.c
+    ${bzip2_SOURCE_DIR}/compress.c
+    ${bzip2_SOURCE_DIR}/decompress.c
+    ${bzip2_SOURCE_DIR}/bzlib.c
+)
+target_include_directories(bzip2 PUBLIC ${bzip2_SOURCE_DIR})
+
+FetchContent_Declare(
+    stormlib
+    GIT_REPOSITORY https://github.com/ladislav-zezula/StormLib.git
+    GIT_TAG        v9.25
+    GIT_SHALLOW    TRUE
+)
+FetchContent_GetProperties(stormlib)
+if(NOT stormlib_POPULATED)
+    FetchContent_Populate(stormlib)
+endif()
+
+add_library(storm-compression STATIC
+    ${stormlib_SOURCE_DIR}/src/huffman/huff.cpp
+    ${stormlib_SOURCE_DIR}/src/adpcm/adpcm.cpp
+    ${stormlib_SOURCE_DIR}/src/sparse/sparse.cpp
+    ${stormlib_SOURCE_DIR}/src/pklib/explode.c
+    ${stormlib_SOURCE_DIR}/src/pklib/implode.c
+    ${stormlib_SOURCE_DIR}/src/lzma/C/LzmaDec.c
+)
+target_include_directories(storm-compression PUBLIC
+    ${stormlib_SOURCE_DIR}/src/huffman
+    ${stormlib_SOURCE_DIR}/src/adpcm
+    ${stormlib_SOURCE_DIR}/src/sparse
+    ${stormlib_SOURCE_DIR}/src/pklib
+    ${stormlib_SOURCE_DIR}/src/lzma/C
+)
+
 option(MOLLEN_STORM_BUILD_MPQ "Build MPQ support" ON)
 option(MOLLEN_STORM_BUILD_CASC "Build CASC support" OFF)
 

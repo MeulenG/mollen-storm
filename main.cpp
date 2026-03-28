@@ -1,4 +1,6 @@
 #include <cstdio>
+#include <vector>
+#include <string>
 
 #ifdef MOLLEN_STORM_HAS_MPQ
 #include "mpq_archive.h"
@@ -18,6 +20,17 @@ int main(int argc, char* argv[]) {
     MpqArchive mpq;
     if (mpq.Open(path)) {
         printf("Opened MPQ: %s\n", path);
+
+        std::vector<std::string> files = mpq.GetListFile();
+        if (files.empty()) {
+            printf("No listfile found or archive is empty.\n");
+        } else {
+            printf("Files in archive (%zu):\n", files.size());
+            for (const std::string& name : files) {
+                printf("  %s\n", name.c_str());
+            }
+        }
+
         mpq.Close();
     }
 #endif

@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <string>
 #include <vector>
 
 #include "crypto.h"
@@ -18,6 +19,7 @@ public:
     bool Open(const char* path);
     void Close();
     std::vector<uint8_t> ExtractFile(const char* filename);
+    std::vector<std::string> GetListFile();
 
 private:
     FILE* file_;
@@ -37,6 +39,8 @@ private:
     std::vector<uint8_t> ExtractSectorBased(const block_table_entry& block, uint32_t file_key);
     bool DecompressSector(const uint8_t* input, uint32_t input_size,
                           uint8_t* output, uint32_t output_size, uint32_t flags);
+
+    void Seek(uint64_t offset);
 };
 
 #endif // MPQ_ARCHIVE_H

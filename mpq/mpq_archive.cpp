@@ -2,6 +2,7 @@
 #include "file_flags.h"
 #include "compression.h"
 #include <cstring>
+#include <string>
 
 MpqArchive::MpqArchive()
     : file_(nullptr), header_{}, archive_offset_(0), sector_size_(0) {
@@ -49,7 +50,7 @@ void MpqArchive::Close() {
 }
 
 bool MpqArchive::ReadHeader() {
-    fseek(file_, (long)archive_offset_, SEEK_SET);
+    Seek(archive_offset_);
     if (fread(&header_, sizeof(mpq_header_v1), 1, file_) != 1) {
         return false;
     }
@@ -65,7 +66,7 @@ bool MpqArchive::ReadHeader() {
 bool MpqArchive::ReadHashTable() {
     hash_table_.resize(header_.hash_table_size);
 
-    fseek(file_, (long)(archive_offset_ + header_.hash_table_pos), SEEK_SET);
+    Seek(archive_offset_ + (uint64_t)header_.hash_table_pos);
     if (fread(hash_table_.data(), sizeof(hash_table_entry),
               header_.hash_table_size, file_) != header_.hash_table_size) {
         return false;
@@ -82,7 +83,7 @@ bool MpqArchive::ReadHashTable() {
 bool MpqArchive::ReadBlockTable() {
     block_table_.resize(header_.block_table_size);
 
-    fseek(file_, (long)(archive_offset_ + header_.block_table_pos), SEEK_SET);
+    Seek(archive_offset_ + (uint64_t)header_.block_table_pos);
     if (fread(block_table_.data(), sizeof(block_table_entry),
               header_.block_table_size, file_) != header_.block_table_size) {
         return false;
@@ -137,7 +138,7 @@ uint32_t MpqArchive::GetFileKey(const char* filename, const block_table_entry& b
 }
 
 std::vector<uint8_t> MpqArchive::ExtractSingleUnit(const block_table_entry& block, uint32_t file_key) {
-    fseek(file_, (long)(archive_offset_ + block.file_offset), SEEK_SET);
+    Seek(archive_offset_ + (uint64_t)block.file_offset);
 
     std::vector<uint8_t> raw(block.compressed_size);
     if (fread(raw.data(), 1, block.compressed_size, file_) != block.compressed_size) {
@@ -169,7 +170,7 @@ std::vector<uint8_t> MpqArchive::ExtractSectorBased(const block_table_entry& blo
         offset_count++;
     }
 
-    fseek(file_, (long)(archive_offset_ + block.file_offset), SEEK_SET);
+    Seek(archive_offset_ + (uint64_t)block.file_offset);
 
     std::vector<uint32_t> sector_offsets(offset_count);
     if (fread(sector_offsets.data(), sizeof(uint32_t), offset_count, file_) != offset_count) {
@@ -190,7 +191,7 @@ std::vector<uint8_t> MpqArchive::ExtractSectorBased(const block_table_entry& blo
             sector_uncompressed_size = block.uncompressed_size - (sector_size_ * i);
         }
 
-        fseek(file_, (long)(archive_offset_ + block.file_offset + sector_offsets[i]), SEEK_SET);
+        Seek(archive_offset_ + (uint64_t)block.file_offset + sector_offsets[i]);
 
         std::vector<uint8_t> sector_data(sector_compressed_size);
         if (fread(sector_data.data(), 1, sector_compressed_size, file_) != sector_compressed_size) {
@@ -223,12 +224,44 @@ bool MpqArchive::DecompressSector(const uint8_t* input, uint32_t input_size,
                                   uint8_t* output, uint32_t output_size, uint32_t flags) {
     if (flags & MPQ_FILE_COMPRESS) {
         uint8_t comp_type = input[0];
-        return Decompress(comp_type, input + 1, input_size - 1, output, output_size);
+        return Decompress(comp_type, input + 1, input_size - 1, output, &output_size);
     }
 
     if (flags & MPQ_FILE_IMPLODE) {
-        return Decompress(COMPRESSION_PKWARE, input, input_size, output, output_size);
+        return Decompress(COMPRESSION_PKWARE, input, input_size, output, &output_size);
     }
 
     return false;
+}
+
+std::vector<std::string> MpqArchive::GetListFile() {
+    std::vector<uint8_t> data = ExtractFile("(listfile)");
+    std::vector<std::string> result;
+    if (data.empty()) {
+        return result;
+    }
+
+    std::string current;
+    for (uint8_t byte : data) {
+        if (byte == '\r') {
+            continue;
+        }
+        if (byte == '\n' || byte == ';') {
+            if (!current.empty()) {
+                result.push_back(current);
+                current.clear();
+            }
+        } else {
+            current += (char)byte;
+        }
+    }
+    return result;
+}
+
+void MpqArchive::Seek(uint64_t offset) {
+#ifdef _WIN32
+    _fseeki64(file_, (int64_t)offset, SEEK_SET);
+#else
+    fseeko(file_, (off_t)offset, SEEK_SET);
+#endif
 }
