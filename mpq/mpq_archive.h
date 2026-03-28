@@ -26,10 +26,17 @@ private:
     std::vector<block_table_entry> block_table_;
     uint32_t crypt_table_[CRYPT_TABLE_SIZE];
     uint32_t archive_offset_;
+    uint32_t sector_size_;
 
     bool ReadHeader();
     bool ReadHashTable();
     bool ReadBlockTable();
+
+    uint32_t GetFileKey(const char* filename, const block_table_entry& block);
+    std::vector<uint8_t> ExtractSingleUnit(const block_table_entry& block, uint32_t file_key);
+    std::vector<uint8_t> ExtractSectorBased(const block_table_entry& block, uint32_t file_key);
+    bool DecompressSector(const uint8_t* input, uint32_t input_size,
+                          uint8_t* output, uint32_t output_size, uint32_t flags);
 };
 
 #endif // MPQ_ARCHIVE_H

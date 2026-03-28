@@ -3,6 +3,15 @@ project(mollen-storm)
 
 set(CMAKE_CXX_STANDARD 17)
 
+include(FetchContent)
+FetchContent_Declare(
+    zlib
+    GIT_REPOSITORY https://github.com/madler/zlib.git
+    GIT_TAG        v1.3.1
+)
+set(ZLIB_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(zlib)
+
 option(MOLLEN_STORM_BUILD_MPQ "Build MPQ support" ON)
 option(MOLLEN_STORM_BUILD_CASC "Build CASC support" OFF)
 

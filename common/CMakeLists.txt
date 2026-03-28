@@ -3,3 +3,5 @@ add_library(mollen-storm-common STATIC
 )
 
 target_include_directories(mollen-storm-common PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(mollen-storm-common PUBLIC zlibstatic)
+target_include_directories(mollen-storm-common PUBLIC ${zlib_SOURCE_DIR} ${zlib_BINARY_DIR})
